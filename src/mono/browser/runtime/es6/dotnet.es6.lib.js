@@ -62,6 +62,7 @@ function setup(emscriptenBuildOptions) {
 const DotnetSupportLib = {
     $DOTNET: { setup },
     icudt68_dat: function () { throw new Error('dummy link symbol') },
+    icudt68_dat__sig: 'v',
 };
 
 function createWasmImportStubsFrom(collection) {

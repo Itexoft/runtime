@@ -124,7 +124,7 @@ static uint16_t GetKeventFlags(uint32_t flags)
 #endif
 #endif
 
-#if !HAVE_IN_PKTINFO
+#if !HAVE_IN_PKTINFO && !defined(TARGET_BROWSER)
 // On platforms, such as FreeBSD, where in_pktinfo
 // is not available, fallback to custom definition
 // with required members.

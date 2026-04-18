@@ -1998,14 +1998,16 @@ ftnptr_to_imethod (gpointer addr, gboolean *need_unbox)
 		g_assert (ftndesc);
 		g_assert (ftndesc->method);
 
-		if (!ftndesc->interp_method) {
+		gpointer tagged_imethod = mono_atomic_load_ptr ((volatile gpointer*)&ftndesc->interp_method);
+		if (!tagged_imethod) {
 			imethod = mono_interp_get_imethod (ftndesc->method);
-			mono_memory_barrier ();
 			// FIXME Handle unboxing here ?
-			ftndesc->interp_method = imethod;
+			tagged_imethod = mono_atomic_cas_ptr ((volatile gpointer*)&ftndesc->interp_method, imethod, NULL);
+			if (!tagged_imethod)
+				tagged_imethod = imethod;
 		}
-		*need_unbox = INTERP_IMETHOD_IS_TAGGED_UNBOX (ftndesc->interp_method);
-		imethod = INTERP_IMETHOD_UNTAG_UNBOX (ftndesc->interp_method);
+		*need_unbox = INTERP_IMETHOD_IS_TAGGED_UNBOX (tagged_imethod);
+		imethod = INTERP_IMETHOD_UNTAG_UNBOX (tagged_imethod);
 	} else {
 		/* Function pointers are represented by their InterpMethod */
 		*need_unbox = INTERP_IMETHOD_IS_TAGGED_UNBOX (addr);
@@ -2020,22 +2022,19 @@ imethod_to_ftnptr (InterpMethod *imethod, gboolean need_unbox)
 	if (mono_llvm_only) {
 		ERROR_DECL (error);
 		/* Function pointers are represented by a MonoFtnDesc structure */
-		MonoFtnDesc **ftndesc_p;
-		if (need_unbox)
-			ftndesc_p = &imethod->ftndesc_unbox;
-		else
-			ftndesc_p = &imethod->ftndesc;
-		if (!*ftndesc_p) {
-			MonoFtnDesc *ftndesc = mini_llvmonly_load_method_ftndesc (imethod->method, FALSE, need_unbox, error);
+		MonoFtnDesc **ftndesc_p = need_unbox ? &imethod->ftndesc_unbox : &imethod->ftndesc;
+		MonoFtnDesc *ftndesc = (MonoFtnDesc*)mono_atomic_load_ptr ((volatile gpointer*)ftndesc_p);
+		if (!ftndesc) {
+			ftndesc = mini_llvmonly_load_method_ftndesc (imethod->method, FALSE, need_unbox, error);
 			mono_error_assert_ok (error);
-			if (need_unbox)
-				ftndesc->interp_method = INTERP_IMETHOD_TAG_UNBOX (imethod);
-			else
-				ftndesc->interp_method = imethod;
-			mono_memory_barrier ();
-			*ftndesc_p = ftndesc;
+			gpointer tagged_imethod = need_unbox ? INTERP_IMETHOD_TAG_UNBOX (imethod) : imethod;
+			gpointer published_imethod = mono_atomic_cas_ptr ((volatile gpointer*)&ftndesc->interp_method, tagged_imethod, NULL);
+			g_assert (!published_imethod || published_imethod == tagged_imethod);
+			MonoFtnDesc *published = (MonoFtnDesc*)mono_atomic_cas_ptr ((volatile gpointer*)ftndesc_p, ftndesc, NULL);
+			if (published)
+				ftndesc = published;
 		}
-		return *ftndesc_p;
+		return ftndesc;
 	} else {
 		if (need_unbox)
 			return INTERP_IMETHOD_TAG_UNBOX (imethod);
@@ -3383,20 +3382,17 @@ no_llvmonly_interp_method_pointer (void)
 static MonoFtnDesc*
 interp_create_method_pointer_llvmonly (MonoMethod *method, gboolean unbox, MonoError *error)
 {
-	gpointer addr, entry_func = NULL, entry_wrapper;
+	gpointer entry_func = NULL, entry_wrapper;
 	MonoMethodSignature *sig;
 	MonoMethod *wrapper;
 	InterpMethod *imethod;
 
 	imethod = mono_interp_get_imethod (method);
 
-	if (unbox) {
-		if (imethod->llvmonly_unbox_entry)
-			return (MonoFtnDesc*)imethod->llvmonly_unbox_entry;
-	} else {
-		if (imethod->jit_entry)
-			return (MonoFtnDesc*)imethod->jit_entry;
-	}
+	gpointer *entry_p = unbox ? &imethod->llvmonly_unbox_entry : &imethod->jit_entry;
+	MonoFtnDesc *ftndesc = (MonoFtnDesc*)mono_atomic_load_ptr ((volatile gpointer*)entry_p);
+	if (ftndesc)
+		return ftndesc;
 
 	sig = mono_method_signature_internal (method);
 
@@ -3461,15 +3457,10 @@ interp_create_method_pointer_llvmonly (MonoMethod *method, gboolean unbox, MonoE
 
 	MonoFtnDesc *entry_ftndesc = mini_llvmonly_create_ftndesc (method, entry_func, entry_arg);
 
-	addr = mini_llvmonly_create_ftndesc (method, entry_wrapper, entry_ftndesc);
-
-	mono_memory_barrier ();
-	if (unbox)
-		imethod->llvmonly_unbox_entry = addr;
-	else
-		imethod->jit_entry = addr;
-
-	return (MonoFtnDesc*)addr;
+	ftndesc = mini_llvmonly_create_ftndesc (method, entry_wrapper, entry_ftndesc);
+	ftndesc->interp_method = unbox ? INTERP_IMETHOD_TAG_UNBOX (imethod) : imethod;
+	MonoFtnDesc *published = (MonoFtnDesc*)mono_atomic_cas_ptr ((volatile gpointer*)entry_p, ftndesc, NULL);
+	return published ? published : ftndesc;
 }
 
 /*

@@ -4,6 +4,13 @@
 #include "pal_config.h"
 #include "pal_maphardwaretype.h"
 
+#if defined(TARGET_BROWSER)
+uint16_t MapHardwareType(uint16_t nativeType)
+{
+    (void)nativeType;
+    return NetworkInterfaceType_Unknown;
+}
+#else
 #include <sys/socket.h>
 #include <sys/types.h>
 
@@ -117,3 +124,4 @@ uint16_t MapHardwareType(uint16_t nativeType)
     return NetworkInterfaceType_Unknown;
 #endif
 }
+#endif

@@ -85,9 +85,8 @@ wasm_dl_get_native_to_interp (uint32_t token, const char *key, void *extra_arg)
 	if (!result)
 		return NULL;
 
-	void *addr = result->func;
 	wasm_native_to_interp_ftndescs [result - wasm_native_to_interp_table] = *(InterpFtnDesc*)extra_arg;
-	return addr;
+	return result->func;
 #else
 	return NULL;
 #endif

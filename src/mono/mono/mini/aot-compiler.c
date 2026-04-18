@@ -195,6 +195,7 @@ typedef struct MonoAotOptions {
 	gboolean save_temps;
 	gboolean write_symbols;
 	gboolean metadata_only;
+	gboolean export_symbols_map;
 	gboolean bind_to_runtime_version;
 	MonoAotMode mode;
 	gboolean interp;
@@ -5527,7 +5528,6 @@ MONO_RESTORE_WARNING
 						memcpy (export_name + prefix_len, named, slen);
 						export_name [prefix_len + slen] = '\0';
 
-						g_ptr_array_add (acfg->exported_methods, method);
 					}
 				}
 				mono_reflection_free_custom_attr_data_args_noalloc (decoded_args);
@@ -5542,9 +5542,10 @@ MONO_RESTORE_WARNING
 					continue;
 				}
 
-				add_method (acfg, wrapper);
-				if (export_name) {
-					g_hash_table_insert (acfg->export_names, wrapper, export_name);
+					add_method (acfg, wrapper);
+					if (export_name) {
+						g_ptr_array_add (acfg->exported_methods, method);
+						g_hash_table_insert (acfg->export_names, wrapper, export_name);
 					g_string_append_printf (export_symbols, "%s\n", export_name);
 				}
 			}
@@ -5559,7 +5560,7 @@ MONO_RESTORE_WARNING
 		}
 	}
 
-	if (acfg->aot_opts.export_symbols_outfile) {
+	if (acfg->aot_opts.export_symbols_outfile && !acfg->aot_opts.export_symbols_map) {
 		char *export_symbols_out = g_string_free (export_symbols, FALSE);
 		FILE* export_symbols_outfile = g_fopen (acfg->aot_opts.export_symbols_outfile, "w");
 		if (!export_symbols_outfile) {
@@ -5570,7 +5571,8 @@ MONO_RESTORE_WARNING
 		fprintf (export_symbols_outfile, "%s", export_symbols_out);
 		g_free (export_symbols_out);
 		fclose (export_symbols_outfile);
-	}
+	} else
+		g_string_free (export_symbols, TRUE);
 }
 
 static void
@@ -7164,6 +7166,7 @@ emit_method_code (MonoAotCompile *acfg, MonoCompile *cfg)
 	char *symbol = NULL;
 	int func_alignment = AOT_FUNC_ALIGNMENT;
 	char *export_name;
+	gboolean free_export_name = FALSE;
 
 	g_assert (cfg);
 
@@ -7217,11 +7220,19 @@ emit_method_code (MonoAotCompile *acfg, MonoCompile *cfg)
 	}
 
 	export_name = (char *)g_hash_table_lookup (acfg->export_names, method);
+	if (!export_name && acfg->llvm && !cfg->compile_llvm && method_is_externally_callable (acfg, cfg->method)) {
+		char *name = mono_aot_get_mangled_method_name (cfg->method);
+		export_name = g_strdup_printf ("%s%s", acfg->user_symbol_prefix, name);
+		g_free (name);
+		free_export_name = TRUE;
+	}
 	if (export_name) {
 		/* Emit a global symbol for the method */
 		emit_global_inner (acfg, export_name, TRUE);
 		emit_label (acfg, export_name);
 	}
+	if (free_export_name)
+		g_free (export_name);
 
 	if (cfg->verbose_level > 0 && cfg)
 		g_print ("Method %s emitted as %s\n", mono_method_get_full_name (method), cfg->asm_symbol);
@@ -8912,6 +8923,8 @@ mono_aot_parse_options (const char *aot_options, MonoAotOptions *opts)
 			opts->llvm_outfile = g_strdup (arg + strlen ("llvm-outfile="));
 		} else if (str_begins_with (arg, "export-symbols-outfile=")) {
 			opts->export_symbols_outfile = g_strdup (arg + strlen ("export-symbols-outfile="));
+		} else if (!strcmp (arg, "export-symbols-map")) {
+			opts->export_symbols_map = TRUE;
 		} else if (str_begins_with (arg, "trimming-eligible-methods-outfile=")) {
 			opts->trimming_eligible_methods_outfile = g_strdup (arg + strlen ("trimming-eligible-methods-outfile="));
 		} else if (str_begins_with (arg, "temp-path=")) {
@@ -9145,6 +9158,7 @@ mono_aot_parse_options (const char *aot_options, MonoAotOptions *opts)
 			printf ("    direct-pinvoke-lists=<string>        - Files containing specific direct pinvokes to generate direct calls for an entire 'module' or specific 'module!entrypoint' on separate lines. Incompatible with 'direct-pinvoke' option.\n");
 			printf ("    direct-pinvoke                       - Generate direct calls for all direct pinvokes encountered in the managed assembly.\n");
 			printf ("    dwarfdebug                           - \n");
+			printf ("    export-symbols-map                   - Write EntryPoint<TAB>LLVMWrapperSymbol records to export-symbols-outfile.\n");
 			printf ("    full                                 - \n");
 			printf ("    hybrid                               - \n");
 			printf ("    info                                 - \n");
@@ -9778,16 +9792,6 @@ compile_method (MonoAotCompile *acfg, MonoMethod *method)
 
 	if (cfg->llvm_only)
 		acfg->stats.llvm_count ++;
-
-	if (acfg->llvm && !cfg->compile_llvm && method_is_externally_callable (acfg, cfg->method)) {
-		/*
-		 * This is a JITted fallback method for a method which failed LLVM compilation, emit a global
-		 * symbol for it with the same name the LLVM method would get.
-		 */
-		char *name = mono_aot_get_mangled_method_name (cfg->method);
-		char *export_name = g_strdup_printf ("%s%s", acfg->user_symbol_prefix, name);
-		g_hash_table_insert (acfg->export_names, cfg->method, export_name);
-	}
 
 	/*
 	 * FIXME: Instead of this mess, allocate the patches from the aot mempool.
@@ -10609,7 +10613,7 @@ mono_aot_get_direct_call_symbol (MonoJumpInfoType type, gconstpointer data)
 	gboolean direct_calls = llvm_acfg->aot_opts.direct_icalls;
 	const char *sym = NULL;
 
-	if (direct_calls && type == MONO_PATCH_INFO_JIT_ICALL_ADDR) {
+	if (direct_calls && (type == MONO_PATCH_INFO_JIT_ICALL_ADDR || type == MONO_PATCH_INFO_JIT_ICALL_ADDR_NOCALL)) {
 		/* Call to a C function implementing a jit icall */
 		sym = mono_find_jit_icall_info ((MonoJitICallId)(gsize)data)->c_symbol;
 	} else if (direct_calls && type == MONO_PATCH_INFO_ICALL_ADDR_CALL) {
@@ -11168,22 +11172,21 @@ emit_method_info_table (MonoAotCompile *acfg)
 	emit_aot_data (acfg, MONO_AOT_TABLE_METHOD_FLAGS_TABLE, "method_flags_table", method_flags, acfg->nmethods);
 
 	/*
-	 * If there is a runtime init callback, emit a table of exported methods.
-	 * These methods can be called before the runtime is initialized, so they need to
-	 * be inited when their AOT image is loaded.
+	 * Emit tokens for exported methods which can be called without a preceding managed call.
+	 * load_aot_module uses this table to initialize their classes and AOT methods explicitly.
 	 */
-	 if (acfg->aot_opts.runtime_init_callback) {
-		 acfg->n_exported_methods = acfg->exported_methods->len;
-		 if (acfg->exported_methods->len) {
-			 guint32 *arr = g_new0 (guint32, acfg->exported_methods->len);
-			 for (i = 0; i < acfg->exported_methods->len; ++i) {
-				 MonoMethod *m = (MonoMethod*)g_ptr_array_index (acfg->exported_methods, i);
-				 arr [i] = mono_method_get_token (m);
-			 }
-			 acfg->exported_methods_offset = add_to_blob_aligned (acfg, (guint8*)arr, acfg->exported_methods->len * sizeof (guint32), 4);
-			 g_free (arr);
-		 }
-	 }
+	if (acfg->exported_methods->len &&
+		(acfg->aot_opts.runtime_init_callback ||
+		 (acfg->aot_opts.static_link && acfg->aot_opts.llvm_only && mono_aot_mode_is_full (&acfg->aot_opts)))) {
+		acfg->n_exported_methods = acfg->exported_methods->len;
+		guint32 *arr = g_new0 (guint32, acfg->exported_methods->len);
+		for (i = 0; i < acfg->exported_methods->len; ++i) {
+			MonoMethod *m = (MonoMethod*)g_ptr_array_index (acfg->exported_methods, i);
+			arr [i] = mono_method_get_token (m);
+		}
+		acfg->exported_methods_offset = add_to_blob_aligned (acfg, (guint8*)arr, acfg->exported_methods->len * sizeof (guint32), 4);
+		g_free (arr);
+	}
 }
 
 #endif /* #if !defined(DISABLE_AOT) && !defined(DISABLE_JIT) */
@@ -14260,7 +14263,7 @@ acfg_create (MonoAssembly *ass, guint32 jit_opts)
 	acfg->unwind_ops = g_ptr_array_new ();
 	acfg->method_label_hash = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
 	acfg->method_order = g_ptr_array_new ();
-	acfg->export_names = g_hash_table_new (NULL, NULL);
+	acfg->export_names = g_hash_table_new_full (NULL, NULL, NULL, g_free);
 	acfg->klass_blob_hash = g_hash_table_new (NULL, NULL);
 	acfg->method_blob_hash = g_hash_table_new (NULL, NULL);
 	acfg->ginst_blob_hash = g_hash_table_new (mono_metadata_generic_inst_hash, mono_metadata_generic_inst_equal);
@@ -14299,6 +14302,7 @@ aot_opts_free (MonoAotOptions *aot_opts)
 	g_free (aot_opts->outfile);
 	g_free (aot_opts->llvm_outfile);
 	g_free (aot_opts->data_outfile);
+	g_free (aot_opts->export_symbols_outfile);
 	for (GList *elem = aot_opts->profile_files; elem; elem = elem->next)
 		g_free (elem->data);
 	g_list_free (aot_opts->profile_files);
@@ -15110,6 +15114,9 @@ aot_assembly (MonoAssembly *ass, guint32 jit_opts, MonoAotOptions *aot_options)
 	if (mono_opt_compressed_interface_bitmap)
 		acfg->flags = (MonoAotFileFlags)(acfg->flags | MONO_AOT_FILE_FLAG_COMPRESSED_INTERFACE_BITMAP);
 
+	if (acfg->aot_opts.runtime_init_callback)
+		acfg->flags = (MonoAotFileFlags)(acfg->flags | MONO_AOT_FILE_FLAG_RUNTIME_INIT_CALLBACK);
+
 	if (mini_safepoints_enabled ())
 		acfg->flags = (MonoAotFileFlags)(acfg->flags | MONO_AOT_FILE_FLAG_SAFEPOINTS);
 
@@ -15515,6 +15522,67 @@ assemble_link (MonoAotCompile *acfg)
 	return 0;
 }
 
+/*
+ * Write the exact relation between an UnmanagedCallersOnly EntryPoint and its LLVM wrapper.
+ * Input is the already compiled exported method table. Output is UTF-8 text containing
+ * EntryPoint<TAB>LLVMWrapperSymbol<LF> records; no compiler or runtime state is changed.
+ */
+static gboolean
+write_export_symbols_map (MonoAotCompile *acfg)
+{
+	if (!acfg->aot_opts.export_symbols_map)
+		return TRUE;
+
+	FILE *outfile = g_fopen (acfg->aot_opts.export_symbols_outfile, "w");
+	if (!outfile) {
+		aot_printerrf (acfg, "Unable to open export symbols map '%s': %s\n", acfg->aot_opts.export_symbols_outfile, strerror (errno));
+		return FALSE;
+	}
+
+	for (guint i = 0; i < acfg->exported_methods->len; ++i) {
+		ERROR_DECL (error);
+		MonoMethod *method = (MonoMethod*)g_ptr_array_index (acfg->exported_methods, i);
+		MonoMethod *wrapper;
+		if (acfg->aot_opts.runtime_init_callback)
+			wrapper = mono_marshal_get_runtime_init_managed_wrapper (method, NULL, 0, error);
+		else
+			wrapper = mono_marshal_get_managed_wrapper (method, NULL, 0, error);
+		mono_error_assert_ok (error);
+
+		const char *export_name = (const char*)g_hash_table_lookup (acfg->export_names, wrapper);
+		MonoCompile *cfg = (MonoCompile*)g_hash_table_lookup (acfg->method_to_cfg, wrapper);
+		if (!export_name || !cfg || !cfg->compile_llvm || !cfg->llvm_method_name) {
+			aot_printerrf (acfg, "Unable to describe the LLVM wrapper for exported method '%s'.\n", mono_method_get_full_name (method));
+			goto fail;
+		}
+
+		export_name += strlen (acfg->user_symbol_prefix);
+		if (strchr (export_name, '\t') || strchr (export_name, '\n') ||
+			strchr (cfg->llvm_method_name, '\t') || strchr (cfg->llvm_method_name, '\n')) {
+			aot_printerrf (acfg, "Export symbols map fields cannot contain TAB or LF characters.\n");
+			goto fail;
+		}
+
+		if (fprintf (outfile, "%s\t%s\n", export_name, cfg->llvm_method_name) < 0) {
+			aot_printerrf (acfg, "Unable to write export symbols map '%s': %s\n", acfg->aot_opts.export_symbols_outfile, strerror (errno));
+			goto fail;
+		}
+	}
+
+	if (fclose (outfile) != 0) {
+		aot_printerrf (acfg, "Unable to close export symbols map '%s': %s\n", acfg->aot_opts.export_symbols_outfile, strerror (errno));
+		g_unlink (acfg->aot_opts.export_symbols_outfile);
+		return FALSE;
+	}
+
+	return TRUE;
+
+fail:
+	fclose (outfile);
+	g_unlink (acfg->aot_opts.export_symbols_outfile);
+	return FALSE;
+}
+
 static int
 emit_aot_image (MonoAotCompile *acfg)
 {
@@ -15563,6 +15631,9 @@ emit_aot_image (MonoAotCompile *acfg)
 			cfg->asm_debug_symbol = g_strdup (cfg->asm_symbol);
 		}
 	}
+
+	if (!write_export_symbols_map (acfg))
+		return 1;
 
 	if (acfg->aot_opts.dwarf_debug && acfg->aot_opts.gnu_asm) {
 		/*
@@ -15793,6 +15864,16 @@ mono_aot_assemblies (MonoAssembly **assemblies, int nassemblies, guint32 jit_opt
 	mono_aot_parse_options (aot_options, &aot_opts);
 	aot_opts.runtime_args = runtime_args;
 	aot_opts.aot_options = aot_options;
+	if (aot_opts.export_symbols_map && !aot_opts.export_symbols_outfile) {
+		fprintf (stderr, "The 'export-symbols-map' option requires the 'export-symbols-outfile=' option.\n");
+		res = 1;
+		goto early_exit;
+	}
+	if (aot_opts.export_symbols_map && !aot_opts.llvm_only) {
+		fprintf (stderr, "The 'export-symbols-map' option requires the 'llvmonly' option.\n");
+		res = 1;
+		goto early_exit;
+	}
 	if (aot_opts.direct_extern_calls && !(aot_opts.llvm && aot_opts.static_link)) {
 		fprintf (stderr, "The 'direct-extern-calls' option requires the 'llvm' and 'static' options.\n");
 		res = 1;

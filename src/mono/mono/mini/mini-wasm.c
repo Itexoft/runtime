@@ -671,18 +671,18 @@ G_BEGIN_DECLS
 #include <uuid/uuid.h>
 
 #ifndef __EMSCRIPTEN_PTHREADS__
-int pthread_getschedparam (pthread_t thread, int *policy, struct sched_param *param)
+__attribute__((weak)) int pthread_getschedparam (pthread_t thread, int *policy, struct sched_param *param)
 {
 	g_error ("pthread_getschedparam");
 	return 0;
 }
-#endif
 
-int
+__attribute__((weak)) int
 pthread_setschedparam(pthread_t thread, int policy, const struct sched_param *param)
 {
 	return 0;
 }
+#endif
 
 int
 sigsuspend(const sigset_t *sigmask)

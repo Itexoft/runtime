@@ -2175,16 +2175,30 @@ export function jiterpreter_allocate_tables () {
         numInterpEntryTables = JiterpreterTable.LAST - JiterpreterTable.InterpEntryStatic0 + 1,
         totalSize = traceTableSize + jitCallTableSize + (numInterpEntryTables * interpEntryTableSize) + 1,
         wasmTable = getWasmFunctionTable();
-    let base = wasmTable.length;
+    // Reuse the canonical base established by the first thread that allocated the jiterpreter
+    // tables. Deriving base from wasmTable.length is thread-dependent: once a side module has been
+    // dlopen'd (growing this thread's table), a later worker would compute a different base and
+    // mono_jiterp_initialize_table would abort with a table-index mismatch. Reusing the shared
+    // canonical base keeps every thread's trampolines at identical absolute table indices; the
+    // same reserved indices are reused, growing the local table only to their required end.
+    const canonicalBase = cwraps.mono_jiterp_get_first_trace_fn_ptr();
+    let base;
     const beforeGrow = performance.now();
-    wasmTable.grow(totalSize);
+    if (canonicalBase !== 0) {
+        base = canonicalBase;
+        const required = base + totalSize;
+        if (wasmTable.length < required)
+            wasmTable.grow(required - wasmTable.length);
+    } else {
+        base = wasmTable.length;
+        wasmTable.grow(totalSize);
+    }
     const afterGrow = performance.now();
-    if (options.enableStats)
-        mono_log_info(`Allocated ${totalSize} function table entries for jiterpreter, bringing total table size to ${wasmTable.length}`);
     base = jiterpreter_allocate_table(JiterpreterTable.Trace, base, traceTableSize, getRawCwrap("mono_jiterp_placeholder_trace"));
     base = jiterpreter_allocate_table(JiterpreterTable.JitCall, base, jitCallTableSize, getRawCwrap("mono_jiterp_placeholder_jit_call"));
     for (let table = JiterpreterTable.InterpEntryStatic0; table <= JiterpreterTable.LAST; table++)
         base = jiterpreter_allocate_table(table, base, interpEntryTableSize, wasmTable.get(cwraps.mono_jiterp_get_interp_entry_func(table)));
+
     const afterTables = performance.now();
     if (options.enableStats)
         mono_log_info(`Growing wasm function table took ${afterGrow - beforeGrow}. Filling table took ${afterTables - afterGrow}.`);

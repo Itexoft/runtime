@@ -62,8 +62,28 @@ if [[ "$__TargetOS" == browser ]]; then
             exit 1
         fi
     fi
+    __EmsdkRoot="${EMSDK_PATH%/}"
+    __EmCacheSaved="${EM_CACHE:-}"
     source "$EMSDK_PATH"/emsdk_env.sh
-    export CLR_CC=$(which emcc)
+    export EM_CONFIG="$__EmsdkRoot/.emscripten"
+    if [[ -n "$__EmCacheSaved" ]]; then
+        export EM_CACHE="$__EmCacheSaved"
+    fi
+    __EmccPath="$(command -v emcc || true)"
+    if [[ -z "$__EmccPath" ]]; then
+        echo "Error: emcc not found after sourcing emsdk_env.sh from $EMSDK_PATH."
+        exit 1
+    fi
+    __EmccPathResolved="$(cd "$(dirname "$__EmccPath")" && pwd -P)/$(basename "$__EmccPath")"
+    __EmsdkRootResolved="$(cd "$__EmsdkRoot" && pwd -P)"
+    case "$__EmccPathResolved" in
+        "$__EmsdkRootResolved"/*) ;;
+        *)
+            echo "Error: emcc resolved to $__EmccPathResolved, which is outside EMSDK_PATH ($__EmsdkRootResolved)."
+            exit 1
+            ;;
+    esac
+    export CLR_CC="$__EmccPath"
 elif [[ "$__TargetOS" == wasi ]]; then
     if [[ -z "$WASI_SDK_PATH" ]]; then
         if [[ -d "$__RepoRootDir"/src/mono/wasi/wasi-sdk ]]; then

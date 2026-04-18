@@ -29,7 +29,6 @@ import { mono_wasm_profiler_record, mono_wasm_profiler_now } from "./profiler";
 import { ds_rt_websocket_create, ds_rt_websocket_send, ds_rt_websocket_poll, ds_rt_websocket_recv, ds_rt_websocket_close } from "./diagnostics";
 
 // the JS methods would be visible to EMCC linker and become imports of the WASM module
-
 export const mono_wasm_threads_imports = !WasmEnableThreads ? [] : [
     // mono-threads-wasm.c
     mono_wasm_pthread_on_pthread_registered,
@@ -144,7 +143,9 @@ export function replace_linker_placeholders (imports: WebAssembly.Imports) {
         if (shortName !== undefined) {
             const stubFn = env[shortName];
             if (typeof stubFn !== "function") throw new Error(`Expected ${shortName} to be a function`);
-            env[shortName] = realFn;
+            const realImport = realFn as Function & { sig?: string };
+            realImport.sig ??= (stubFn as Function & { sig?: string }).sig;
+            env[shortName] = realImport;
         }
     }
 }

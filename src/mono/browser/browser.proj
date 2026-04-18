@@ -24,6 +24,7 @@
     <WasmSingleFileBundle Condition="'$(WasmSingleFileBundle)' == ''">false</WasmSingleFileBundle>
     <WasmEnableSIMD Condition="'$(WasmEnableSIMD)' == ''">true</WasmEnableSIMD>
     <WasmEnableExceptionHandling Condition="'$(WasmEnableExceptionHandling)' == ''">true</WasmEnableExceptionHandling>
+    <WasmEmitSymbolMap Condition="'$(WasmEmitSymbolMap)' == ''">true</WasmEmitSymbolMap>
     <EmccMaximumHeapSize Condition="'$(EmccMaximumHeapSize)' == ''">2147483648</EmccMaximumHeapSize>
     <WasmEnableJsInteropByValue Condition="'$(WasmEnableJsInteropByValue)' == '' and '$(WasmEnableThreads)' == 'true'">true</WasmEnableJsInteropByValue>
     <WasmEnableJsInteropByValue Condition="'$(WasmEnableJsInteropByValue)' == ''">false</WasmEnableJsInteropByValue>
@@ -154,22 +155,35 @@
 
     <!-- Generate wasm-props.json -->
 
-    <RunWithEmSdkEnv Command="$(EmccCmd) --version"
+    <PropertyGroup>
+      <_EmccVersionFile>$(BaseIntermediateOutputPath)emcc-version.txt</_EmccVersionFile>
+    </PropertyGroup>
+
+    <Exec Condition="'$(OS)' != 'Windows_NT'"
+          Command="bash -c 'set -euo pipefail; EMSDK_ROOT=&quot;$(EMSDK_PATH)&quot;; EMSDK_ROOT=&quot;${EMSDK_ROOT%/}&quot;; if [ -z &quot;$EMSDK_ROOT&quot; ]; then echo &quot;EMSDK_PATH is not set&quot;; exit 1; fi; if [ ! -f &quot;$EMSDK_ROOT/emsdk_env.sh&quot; ]; then echo &quot;emsdk_env.sh not found: $EMSDK_ROOT/emsdk_env.sh&quot;; exit 1; fi; EM_CACHE_SAVED=&quot;${EM_CACHE:-}&quot;; source &quot;$EMSDK_ROOT/emsdk_env.sh&quot; &gt;/dev/null 2&gt;&amp;1; EM_CONFIG_PATH_A=&quot;$EMSDK_ROOT/emscripten/.emscripten&quot;; EM_CONFIG_PATH_B=&quot;$EMSDK_ROOT/.emscripten&quot;; if [ -n &quot;${EM_CONFIG:-}&quot; ]; then if [ ! -f &quot;$EM_CONFIG&quot; ]; then echo &quot;EM_CONFIG not found: $EM_CONFIG&quot;; exit 1; fi; else if [ -f &quot;$EM_CONFIG_PATH_A&quot; ] &amp;&amp; [ -f &quot;$EM_CONFIG_PATH_B&quot; ]; then echo &quot;EM_CONFIG is ambiguous: $EM_CONFIG_PATH_A and $EM_CONFIG_PATH_B&quot;; exit 1; fi; if [ -f &quot;$EM_CONFIG_PATH_A&quot; ]; then export EM_CONFIG=&quot;$EM_CONFIG_PATH_A&quot;; elif [ -f &quot;$EM_CONFIG_PATH_B&quot; ]; then export EM_CONFIG=&quot;$EM_CONFIG_PATH_B&quot;; else echo &quot;EM_CONFIG not found under EMSDK_PATH: $EMSDK_ROOT&quot;; exit 1; fi; fi; if [ -n &quot;${DOTNET_EMSCRIPTEN_BINARYEN_ROOT:-}&quot; ]; then if [ ! -d &quot;$DOTNET_EMSCRIPTEN_BINARYEN_ROOT&quot; ]; then echo &quot;DOTNET_EMSCRIPTEN_BINARYEN_ROOT not found: $DOTNET_EMSCRIPTEN_BINARYEN_ROOT&quot;; exit 1; fi; export BINARYEN_ROOT=&quot;$DOTNET_EMSCRIPTEN_BINARYEN_ROOT&quot;; if [ -d &quot;$BINARYEN_ROOT/bin&quot; ]; then export PATH=&quot;$BINARYEN_ROOT/bin:$PATH&quot;; fi; fi; if [ -n &quot;$EM_CACHE_SAVED&quot; ]; then export EM_CACHE=&quot;$EM_CACHE_SAVED&quot;; fi; unset EMCC_DEBUG; $(EmccCmd) --version &gt; &quot;$(_EmccVersionFile)&quot; 2&gt;&amp;1'"
+          IgnoreStandardErrorWarningFormat="true" />
+
+    <ReadLinesFromFile Condition="'$(OS)' != 'Windows_NT'" File="$(_EmccVersionFile)">
+      <Output TaskParameter="Lines" ItemName="_VersionLines" />
+    </ReadLinesFromFile>
+
+    <RunWithEmSdkEnv Condition="'$(OS)' == 'Windows_NT'"
+          Command="$(EmccCmd) --version"
           ConsoleToMsBuild="true"
           EmSdkPath="$(EMSDK_PATH)"
           IgnoreStandardErrorWarningFormat="true">
       <Output TaskParameter="ConsoleOutput" ItemName="_VersionLines" />
     </RunWithEmSdkEnv>
 
-    <!-- we want to get the first line from the output, which has the version.
-         Rest of the lines are the license -->
+    <PropertyGroup>
+      <_EmccVersionRegexPattern>^ *emcc \([^\)]+\) *([0-9\.]+).*\(([^\)]+)\)$</_EmccVersionRegexPattern>
+    </PropertyGroup>
     <ItemGroup>
-      <_ReversedVersionLines Include="@(_VersionLines->Reverse())" />
+      <_EmccVersionCandidates Include="@(_VersionLines)"
+                              Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('%(Identity)', $(_EmccVersionRegexPattern)))" />
     </ItemGroup>
     <PropertyGroup>
-      <_EmccVersionRaw>%(_ReversedVersionLines.Identity)</_EmccVersionRaw>
-
-      <_EmccVersionRegexPattern>^ *emcc \([^\)]+\) *([0-9\.]+).*\(([^\)]+)\)$</_EmccVersionRegexPattern>
+      <_EmccVersionRaw>%(_EmccVersionCandidates.Identity)</_EmccVersionRaw>
       <_EmccVersion>$([System.Text.RegularExpressions.Regex]::Match($(_EmccVersionRaw), $(_EmccVersionRegexPattern)).Groups[1].Value)</_EmccVersion>
       <_EmccVersionHash>$([System.Text.RegularExpressions.Regex]::Match($(_EmccVersionRaw), $(_EmccVersionRegexPattern)).Groups[2].Value)</_EmccVersionHash>
     </PropertyGroup>
@@ -263,10 +277,7 @@
       <EmccExportedFunction Include="_tanhf" />
     </ItemGroup>
     <ItemGroup Condition="'$(WasmEnableThreads)' == 'true'">
-      <EmccExportedFunction Include="_emscripten_main_runtime_thread_id"  />
-    </ItemGroup>
-    <ItemGroup Condition="'$(WasmEnableThreads)' == 'true'">
-      <EmccExportedFunction Include="_emscripten_main_runtime_thread_id"  />
+      <EmccExportedFunction Include="_emscripten_main_runtime_thread_id" />
     </ItemGroup>
     <PropertyGroup>
       <_EmccExportedLibraryFunction>"[@(EmccExportedLibraryFunction -> '%27%(Identity)%27', ',')]"</_EmccExportedLibraryFunction>
@@ -276,11 +287,17 @@
       <EmccInitialHeapSize>33554432</EmccInitialHeapSize>
       <EmccStackSize>5MB</EmccStackSize>
     </PropertyGroup>
+    <ItemGroup Condition="'$(WasmEnableThreads)' == 'true'">
+      <_EmccThreadFlags Include="-pthread" />
+      <_EmccThreadFlags Include="-matomics" />
+      <_EmccThreadFlags Include="-mbulk-memory" />
+    </ItemGroup>
     <ItemGroup>
       <_EmccLinkFlags Include="-Wno-unused-command-line-argument" />
       <_EmccLinkFlags Include="-s INITIAL_MEMORY=$(EmccInitialHeapSize)" />
       <_EmccLinkFlags Include="-s STACK_SIZE=$(EmccStackSize)" />
-      <_EmccCommonFlags Condition="'$(WasmEnableThreads)' == 'true'" Include="-s USE_PTHREADS=1" />
+      <_EmccCommonFlags Condition="'$(WasmEnableThreads)' == 'true'" Include="@(_EmccThreadFlags)" />
+      <_EmccLinkFlags Condition="'$(WasmEnableThreads)' == 'true'" Include="@(_EmccThreadFlags)" />
       <_EmccLinkFlags Condition="'$(WasmEnableThreads)' == 'true'" Include="-Wno-pthreads-mem-growth" />
       <_EmccLinkFlags Condition="'$(WasmEnableThreads)' == 'true'" Include="-s PTHREAD_POOL_SIZE=0" />
       <_EmccLinkFlags Condition="'$(WasmEnableThreads)' == 'true'" Include="-s PTHREAD_POOL_SIZE_STRICT=0" />
@@ -296,6 +313,7 @@
       <_EmccLinkFlags Include="-s WASM_BIGINT=1" />
       <_EmccLinkFlags Include="-s EXPORT_NAME=&quot;'createDotnetRuntime'&quot;" />
       <_EmccLinkFlags Include="-s MODULARIZE=1" />
+      <_EmccLinkFlags Include="$(EmccExtraLDFlags)" Condition="'$(EmccExtraLDFlags)' != ''" />
 
       <_EmccLinkFlags Include="-s ENVIRONMENT=&quot;web,webview,worker,node,shell&quot;" />
       <!-- remove -Wno-limited-postlink-optimizations once below issue is fixed
@@ -307,7 +325,13 @@
       <WasmOptConfigurationFlags Include="--enable-threads;--enable-bulk-memory;--enable-sign-ext" />
 
       <!-- workaround for https://github.com/emscripten-core/emscripten/issues/18034 -->
-      <_EmccLinkFlags Include="-s TEXTDECODER=0"/>
+      <_EmccLinkFlags Include="-s TEXTDECODER=1"/>
+    </ItemGroup>
+    <ItemGroup Condition="'$(WasmEnableThreads)' == 'true'">
+      <_EmccCompileFlags Include="@(_EmccThreadFlags)" />
+    </ItemGroup>
+    <ItemGroup>
+      <_EmccCompileFlags Include="$(EmccExtraCFlags)" Condition="'$(EmccExtraCFlags)' != ''" />
     </ItemGroup>
 
     <ItemGroup Condition="'$(OS)' != 'Windows_NT'">
@@ -387,6 +411,7 @@
 
       <CMakeConfigurationEmccFlags Condition="'$(Configuration)' == 'Debug'">-g -Os -DDEBUG=1</CMakeConfigurationEmccFlags>
       <CMakeConfigurationEmccFlags Condition="'$(Configuration)' == 'Release'">-Oz</CMakeConfigurationEmccFlags>
+      <CMakeConfigurationEmccFlags Condition="'$(WasmEnableThreads)' == 'true'">$(CMakeConfigurationEmccFlags) @(_EmccThreadFlags, ' ')</CMakeConfigurationEmccFlags>
 
       <CMakeConfigurationLinkFlags Condition="'$(Configuration)' == 'Debug'"  >$(CMakeConfigurationEmccFlags) -s ASSERTIONS=1 </CMakeConfigurationLinkFlags>
       <CMakeConfigurationLinkFlags Condition="'$(Configuration)' == 'Release'">-O2</CMakeConfigurationLinkFlags>
@@ -394,10 +419,11 @@
       <!-- -lexports.js has the magical property of disabling minification of export names -->
       <CMakeConfigurationLinkFlags>$(CMakeConfigurationLinkFlags) -s EXPORT_ES6=1 -lexports.js</CMakeConfigurationLinkFlags>
       <CMakeConfigurationLinkFlags Condition="'$(WasmEnableSIMD)' == 'true'">$(CMakeConfigurationLinkFlags) -msimd128</CMakeConfigurationLinkFlags>
-      <CMakeConfigurationLinkFlags Condition="'$(WasmEnableThreads)' == 'true'">$(CMakeConfigurationLinkFlags) -Wno-pthreads-mem-growth</CMakeConfigurationLinkFlags>
-      <CMakeConfigurationLinkFlags                                            >$(CMakeConfigurationLinkFlags) --emit-symbol-map</CMakeConfigurationLinkFlags>
+      <CMakeConfigurationLinkFlags Condition="'$(WasmEnableThreads)' == 'true'">$(CMakeConfigurationLinkFlags) -Wno-pthreads-mem-growth @(_EmccThreadFlags, ' ')</CMakeConfigurationLinkFlags>
+      <CMakeConfigurationLinkFlags Condition="'$(WasmEmitSymbolMap)' == 'true'">$(CMakeConfigurationLinkFlags) --emit-symbol-map</CMakeConfigurationLinkFlags>
 
       <CMakeConfigurationEmsdkPath Condition="'$(Configuration)' == 'Release'"> -DEMSDK_PATH=&quot;$(EMSDK_PATH.TrimEnd('\/').Replace('\','/'))&quot;</CMakeConfigurationEmsdkPath>
+
 
       <CMakeBuildRuntimeConfigureCmd>emcmake cmake $(MSBuildThisFileDirectory)runtime</CMakeBuildRuntimeConfigureCmd>
       <CMakeBuildRuntimeConfigureCmd>$(CMakeBuildRuntimeConfigureCmd) -DCMAKE_BUILD_TYPE=$(Configuration)</CMakeBuildRuntimeConfigureCmd>
@@ -412,16 +438,17 @@
       <CMakeBuildRuntimeConfigureCmd Condition="'$(WasmEnableSIMD)' == 'true'">$(CMakeBuildRuntimeConfigureCmd) -DCONFIGURATION_COMPILE_OPTIONS=&quot;-msimd128&quot; -DCONFIGURATION_INTERPSIMDTABLES_LIB=&quot;simd&quot;</CMakeBuildRuntimeConfigureCmd>
       <CMakeBuildRuntimeConfigureCmd Condition="'$(WasmEnableSIMD)' != 'true'">$(CMakeBuildRuntimeConfigureCmd) -DCONFIGURATION_INTERPSIMDTABLES_LIB=&quot;nosimd&quot;</CMakeBuildRuntimeConfigureCmd>
       <CMakeBuildRuntimeConfigureCmd Condition="'$(WasmEnableThreads)' == 'true'">$(CMakeBuildRuntimeConfigureCmd) -DDISABLE_THREADS=0</CMakeBuildRuntimeConfigureCmd>
+      <CMakeBuildRuntimeConfigureCmd Condition="'$(WasmEnableThreads)' != 'true'">$(CMakeBuildRuntimeConfigureCmd) -DDISABLE_THREADS=1</CMakeBuildRuntimeConfigureCmd>
       <CMakeBuildRuntimeConfigureCmd Condition="'$(WasmEnableJsInteropByValue)' == 'true'">$(CMakeBuildRuntimeConfigureCmd) -DENABLE_JS_INTEROP_BY_VALUE=1</CMakeBuildRuntimeConfigureCmd>
       <CMakeBuildRuntimeConfigureCmd>$(CMakeBuildRuntimeConfigureCmd) $(CMakeConfigurationEmsdkPath)</CMakeBuildRuntimeConfigureCmd>
 
       <CMakeBuildRuntimeConfigureCmd Condition="'$(OS)' == 'Windows_NT'">call &quot;$(RepositoryEngineeringDir)native\init-vs-env.cmd&quot; &amp;&amp; call &quot;$([MSBuild]::NormalizePath('$(EMSDK_PATH)', 'emsdk_env.cmd'))&quot; &amp;&amp; $(CMakeBuildRuntimeConfigureCmd)</CMakeBuildRuntimeConfigureCmd>
-      <CMakeBuildRuntimeConfigureCmd Condition="'$(OS)' != 'Windows_NT'">bash -c 'source $(EMSDK_PATH)/emsdk_env.sh 2>&amp;1 &amp;&amp; $(CMakeBuildRuntimeConfigureCmd)'</CMakeBuildRuntimeConfigureCmd>
+      <CMakeBuildRuntimeConfigureCmd Condition="'$(OS)' != 'Windows_NT'">bash -c 'EMSDK_ROOT="$(EMSDK_PATH)"; EMSDK_ROOT="${EMSDK_ROOT%/}"; if [ -z "$EMSDK_ROOT" ]; then echo "EMSDK_PATH is not set"; exit 1; fi; EM_CACHE_SAVED="${EM_CACHE:-}"; source "$EMSDK_ROOT/emsdk_env.sh" 2>&amp;1 &amp;&amp; EM_CONFIG_PATH_A="$EMSDK_ROOT/emscripten/.emscripten"; EM_CONFIG_PATH_B="$EMSDK_ROOT/.emscripten"; if [ -n "${EM_CONFIG:-}" ]; then if [ ! -f "$EM_CONFIG" ]; then echo "EM_CONFIG not found: $EM_CONFIG"; exit 1; fi; else if [ -f "$EM_CONFIG_PATH_A" ] &amp;&amp; [ -f "$EM_CONFIG_PATH_B" ]; then echo "EM_CONFIG is ambiguous: $EM_CONFIG_PATH_A and $EM_CONFIG_PATH_B"; exit 1; fi; if [ -f "$EM_CONFIG_PATH_A" ]; then export EM_CONFIG="$EM_CONFIG_PATH_A"; elif [ -f "$EM_CONFIG_PATH_B" ]; then export EM_CONFIG="$EM_CONFIG_PATH_B"; else echo "EM_CONFIG not found under EMSDK_PATH: $EMSDK_ROOT"; exit 1; fi; fi; if [ -n "${DOTNET_EMSCRIPTEN_BINARYEN_ROOT:-}" ]; then if [ ! -d "$DOTNET_EMSCRIPTEN_BINARYEN_ROOT" ]; then echo "DOTNET_EMSCRIPTEN_BINARYEN_ROOT not found: $DOTNET_EMSCRIPTEN_BINARYEN_ROOT"; exit 1; fi; export BINARYEN_ROOT="$DOTNET_EMSCRIPTEN_BINARYEN_ROOT"; if [ -d "$BINARYEN_ROOT/bin" ]; then export PATH="$BINARYEN_ROOT/bin:$PATH"; fi; fi; if [ -n "$EM_CACHE_SAVED" ]; then export EM_CACHE="$EM_CACHE_SAVED"; fi; $(CMakeBuildRuntimeConfigureCmd)'</CMakeBuildRuntimeConfigureCmd>
 
       <CMakeOptions Condition="'$(MonoVerboseBuild)' != ''">-v</CMakeOptions>
       <CMakeBuildRuntimeCmd>cmake --build . --config $(Configuration) $(CmakeOptions)</CMakeBuildRuntimeCmd>
       <CMakeBuildRuntimeCmd Condition="'$(OS)' == 'Windows_NT'">call &quot;$(RepositoryEngineeringDir)native\init-vs-env.cmd&quot; &amp;&amp; call &quot;$([MSBuild]::NormalizePath('$(EMSDK_PATH)', 'emsdk_env.cmd'))&quot; &amp;&amp; $(CMakeBuildRuntimeCmd)</CMakeBuildRuntimeCmd>
-      <CMakeBuildRuntimeCmd Condition="'$(OS)' != 'Windows_NT'">bash -c 'source $(EMSDK_PATH)/emsdk_env.sh 2>&amp;1 &amp;&amp;  $(CMakeBuildRuntimeCmd)'</CMakeBuildRuntimeCmd>
+      <CMakeBuildRuntimeCmd Condition="'$(OS)' != 'Windows_NT'">bash -c 'EMSDK_ROOT="$(EMSDK_PATH)"; EMSDK_ROOT="${EMSDK_ROOT%/}"; if [ -z "$EMSDK_ROOT" ]; then echo "EMSDK_PATH is not set"; exit 1; fi; EM_CACHE_SAVED="${EM_CACHE:-}"; source "$EMSDK_ROOT/emsdk_env.sh" 2>&amp;1 &amp;&amp; EM_CONFIG_PATH_A="$EMSDK_ROOT/emscripten/.emscripten"; EM_CONFIG_PATH_B="$EMSDK_ROOT/.emscripten"; if [ -n "${EM_CONFIG:-}" ]; then if [ ! -f "$EM_CONFIG" ]; then echo "EM_CONFIG not found: $EM_CONFIG"; exit 1; fi; else if [ -f "$EM_CONFIG_PATH_A" ] &amp;&amp; [ -f "$EM_CONFIG_PATH_B" ]; then echo "EM_CONFIG is ambiguous: $EM_CONFIG_PATH_A and $EM_CONFIG_PATH_B"; exit 1; fi; if [ -f "$EM_CONFIG_PATH_A" ]; then export EM_CONFIG="$EM_CONFIG_PATH_A"; elif [ -f "$EM_CONFIG_PATH_B" ]; then export EM_CONFIG="$EM_CONFIG_PATH_B"; else echo "EM_CONFIG not found under EMSDK_PATH: $EMSDK_ROOT"; exit 1; fi; fi; if [ -n "${DOTNET_EMSCRIPTEN_BINARYEN_ROOT:-}" ]; then if [ ! -d "$DOTNET_EMSCRIPTEN_BINARYEN_ROOT" ]; then echo "DOTNET_EMSCRIPTEN_BINARYEN_ROOT not found: $DOTNET_EMSCRIPTEN_BINARYEN_ROOT"; exit 1; fi; export BINARYEN_ROOT="$DOTNET_EMSCRIPTEN_BINARYEN_ROOT"; if [ -d "$BINARYEN_ROOT/bin" ]; then export PATH="$BINARYEN_ROOT/bin:$PATH"; fi; fi; if [ -n "$EM_CACHE_SAVED" ]; then export EM_CACHE="$EM_CACHE_SAVED"; fi; $(CMakeBuildRuntimeCmd)'</CMakeBuildRuntimeCmd>
     </PropertyGroup>
     <ItemGroup>
       <_CmakeEnvironmentVariable Include="ENABLE_JS_INTEROP_BY_VALUE=1" Condition="'$(WasmEnableJsInteropByValue)' != 'false'"/>
@@ -437,6 +464,8 @@
       <_CmakeEnvironmentVariable Include="EM_CACHE=$(WasmCachePath)" Condition="'$(WasmCachePath)' != ''" />
       <_CmakeEnvironmentVariable Include="EM_FROZEN_CACHE=1" Condition="'$(WasmCachePath)' == '$(EmscriptenCacheSdkCacheDir)'" />
       <_CmakeEnvironmentVariable Include="EM_FROZEN_CACHE=0" Condition="'$(WasmCachePath)' != '' and '$(WasmCachePath)' != '$(EmscriptenCacheSdkCacheDir)'" />
+      <_CmakeEnvironmentVariable Include="EMCC_CFLAGS=-matomics -mbulk-memory" Condition="'$(WasmEnableThreads)' == 'true'" />
+      <_CmakeEnvironmentVariable Include="EMCC_LDFLAGS=-matomics -mbulk-memory" Condition="'$(WasmEnableThreads)' == 'true'" />
     </ItemGroup>
 
     <Copy SourceFiles="$(PInvokeTableFile)"
@@ -516,6 +545,7 @@
 
     <Copy SourceFiles="$(NativeBinDir)dotnet.native.js.symbols"
           DestinationFolder="$(MicrosoftNetCoreAppRuntimePackNativeDir)"
+          Condition="'$(WasmEmitSymbolMap)' == 'true'"
           SkipUnchangedFiles="true" />
 
     <Copy SourceFiles="@(IcuDataFiles);@(ICULibNativeFiles);@(_WasmArchivedTimezones)"

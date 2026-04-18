@@ -14,7 +14,6 @@
 #include <mono/utils/checked-build.h>
 
 #include <glib.h>
-
 #ifdef HOST_BROWSER
 
 #include <mono/utils/mono-threads-wasm.h>

@@ -10,6 +10,32 @@
 #include "aot-runtime.h"
 
 /*
+ * Input: an interpreter method plus its unbox ABI flag. Output: the LLVM-only descriptor produced
+ * by the interpreter. The interpreter's canonical descriptor cache changes on first use;
+ * correctness means an LLVM caller never receives a regular interpreter function pointer.
+ */
+static MonoFtnDesc*
+mini_llvmonly_load_interp_method_ftndesc (MonoMethod *method, gboolean need_unbox, MonoError *error)
+{
+	error_init (error);
+	return mini_get_interp_callbacks ()->create_method_pointer_llvmonly (method, need_unbox, error);
+}
+
+/*
+ * Input: a method whose assembly can have a registered AOT module. Output: its initialized AOT
+ * address, or NULL when that module has no compiled body. Only class initialization can change;
+ * correctness means absence of AOT remains a successful lookup rather than starting the JIT.
+ */
+static gpointer
+mini_llvmonly_lookup_registered_aot_method (MonoMethod *method, MonoError *error)
+{
+	if (!mono_class_init_checked (method->klass, error))
+		return NULL;
+
+	return mono_aot_get_method (method, error);
+}
+
+/*
  * mini_llvmonly_load_method:
  *
  *   Return the AOT-ed code METHOD, or an interpreter entry for it.
@@ -18,17 +44,15 @@
 gpointer
 mini_llvmonly_load_method (MonoMethod *method, gboolean caller_gsharedvt, gboolean need_unbox, gpointer *out_arg, MonoError *error)
 {
-	gpointer addr = mono_compile_method_checked (method, error);
-
-	if (!is_ok (error)) {
-		mono_error_cleanup (error);
-		error_init_reuse (error);
-	}
+	gpointer addr = mono_ee_features.force_use_interpreter
+		? mini_llvmonly_lookup_registered_aot_method (method, error)
+		: mono_compile_method_checked (method, error);
+	return_val_if_nok (error, NULL);
 
 	if (addr) {
 		return mini_llvmonly_add_method_wrappers (method, (gpointer)addr, caller_gsharedvt, need_unbox, out_arg);
 	} else {
-		MonoFtnDesc *desc = mini_get_interp_callbacks ()->create_method_pointer_llvmonly (method, need_unbox, error);
+		MonoFtnDesc *desc = mini_llvmonly_load_interp_method_ftndesc (method, need_unbox, error);
 		return_val_if_nok (error, NULL);
 		*out_arg = desc->arg;
 		return desc->addr;
@@ -41,7 +65,9 @@ mini_llvmonly_load_method (MonoMethod *method, gboolean caller_gsharedvt, gboole
 MonoFtnDesc*
 mini_llvmonly_load_method_ftndesc (MonoMethod *method, gboolean caller_gsharedvt, gboolean need_unbox, MonoError *error)
 {
-	gpointer addr = mono_compile_method_checked (method, error);
+	gpointer addr = mono_ee_features.force_use_interpreter
+		? mini_llvmonly_lookup_registered_aot_method (method, error)
+		: mono_compile_method_checked (method, error);
 	return_val_if_nok (error, NULL);
 
 	if (addr) {
@@ -50,7 +76,7 @@ mini_llvmonly_load_method_ftndesc (MonoMethod *method, gboolean caller_gsharedvt
 		// FIXME: Cache this
 		return mini_llvmonly_create_ftndesc (method, addr, arg);
 	} else {
-		MonoFtnDesc *ftndesc = mini_get_interp_callbacks ()->create_method_pointer_llvmonly (method, need_unbox, error);
+		MonoFtnDesc *ftndesc = mini_llvmonly_load_interp_method_ftndesc (method, need_unbox, error);
 		return_val_if_nok (error, NULL);
 		return ftndesc;
 	}
@@ -63,7 +89,9 @@ mini_llvmonly_load_method_ftndesc (MonoMethod *method, gboolean caller_gsharedvt
 gpointer
 mini_llvmonly_load_method_delegate (MonoMethod *method, gboolean caller_gsharedvt, gboolean need_unbox, gpointer *out_arg, MonoError *error)
 {
-	gpointer addr = mono_compile_method_checked (method, error);
+	gpointer addr = mono_ee_features.force_use_interpreter
+		? mini_llvmonly_lookup_registered_aot_method (method, error)
+		: mono_compile_method_checked (method, error);
 	return_val_if_nok (error, NULL);
 
 	if (addr) {
@@ -72,7 +100,7 @@ mini_llvmonly_load_method_delegate (MonoMethod *method, gboolean caller_gsharedv
 		*out_arg = mini_llvmonly_get_delegate_arg (method, addr);
 		return addr;
 	} else {
-		MonoFtnDesc *desc = mini_get_interp_callbacks ()->create_method_pointer_llvmonly (method, need_unbox, error);
+		MonoFtnDesc *desc = mini_llvmonly_load_interp_method_ftndesc (method, need_unbox, error);
 		return_val_if_nok (error, NULL);
 
 		g_assert (!caller_gsharedvt);

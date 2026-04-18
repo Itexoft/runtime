@@ -227,8 +227,12 @@
         $(LibrariesNativeArtifactsPath)dotnet.d.ts;
         $(LibrariesNativeArtifactsPath)package.json;
         $(LibrariesNativeArtifactsPath)dotnet.native.wasm;
-        $(LibrariesNativeArtifactsPath)dotnet.native.js.symbols;
+        
         $(LibrariesNativeArtifactsPath)*.dat;"
+        IsNative="true" />
+      <LibrariesRuntimeFiles Condition="'$(TargetOS)' == 'browser' and '$(WasmEmitSymbolMap)' != 'false'"
+                             Include="
+        $(LibrariesNativeArtifactsPath)dotnet.native.js.symbols"
         IsNative="true" />
       <!-- for threaded wasm -->
       <LibrariesRuntimeFiles Condition="'$(TargetOS)' == 'browser' and Exists('$(LibrariesNativeArtifactsPath)dotnet.native.worker.mjs')"
@@ -262,6 +266,10 @@
         $(LibrariesNativeArtifactsPath)dotnet.wasm;
         $(LibrariesNativeArtifactsPath)*.wit;
         $(LibrariesNativeArtifactsPath)*.dat;"
+        IsNative="true" />
+      <LibrariesRuntimeFiles Condition="'$(TargetOS)' == 'browser' and '$(WasmEmitSymbolMap)' != 'false'"
+                             Include="
+        $(LibrariesNativeArtifactsPath)dotnet.native.js.symbols"
         IsNative="true" />
 
       <LibrariesRuntimeFiles Include="

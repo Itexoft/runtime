@@ -7245,6 +7245,21 @@ MONO_RESTORE_WARNING
 		case OP_AOTCONST: {
 			MonoJumpInfoType ji_type = ins->inst_c1;
 			gpointer ji_data = ins->inst_p0;
+			/*
+			 * Input: a jit-icall function-address constant with direct icalls enabled. Output: the
+			 * external runtime function reference. No AOT GOT slot is created; correctness means
+			 * a dynamically linked module imports the function instead of loading an uninitialized
+			 * shared slot.
+			 */
+			if (ji_type == MONO_PATCH_INFO_JIT_ICALL_ADDR || ji_type == MONO_PATCH_INFO_JIT_ICALL_ADDR_NOCALL) {
+				char *symbol = mono_aot_get_direct_call_symbol (ji_type, ji_data);
+				if (symbol) {
+					MonoJitICallInfo * const info = mono_find_jit_icall_info ((MonoJitICallId)(gsize)ji_data);
+					g_free (symbol);
+					values [ins->dreg] = get_callee_llvmonly (ctx, sig_to_llvm_sig (ctx, info->sig), ji_type, ji_data);
+					break;
+				}
+			}
 
 			if (ji_type == MONO_PATCH_INFO_ICALL_ADDR) {
 				char *symbol = mono_aot_get_direct_call_symbol (MONO_PATCH_INFO_ICALL_ADDR_CALL, ji_data);

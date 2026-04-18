@@ -6,6 +6,7 @@
 #include "pal_utilities.h"
 
 #include <assert.h>
+#include <errno.h>
 #include <utime.h>
 #include <time.h>
 #include <sys/stat.h>
@@ -64,6 +65,9 @@ int32_t SystemNative_FUTimens(intptr_t fd, TimeSpec* times)
     updatedTimes[1].tv_nsec = (long)times[1].tv_nsec;
 
     while (CheckInterrupted(result = futimens(ToFileDescriptor(fd), updatedTimes)));
+#elif defined(TARGET_BROWSER)
+    errno = ENOTSUP;
+    result = -1;
 #else
     // Fallback on unsupported platforms (e.g. iOS, tvOS, watchOS)
     // to futimes (lower precision)

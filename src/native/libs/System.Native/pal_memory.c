@@ -17,6 +17,9 @@
 #elif HAVE_MALLOC_USABLE_SIZE_NP
     #include <malloc_np.h>
     #define MALLOC_SIZE(s) malloc_usable_size(s)
+#elif defined(TARGET_BROWSER)
+    #include <malloc.h>
+    #define MALLOC_SIZE(s) malloc_usable_size(s)
 #elif defined(TARGET_SUNOS)
     #define MALLOC_SIZE(s) (*((size_t*)(s)-1))
 #else

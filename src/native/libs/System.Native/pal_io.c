@@ -799,7 +799,7 @@ int32_t SystemNative_SymLink(const char* target, const char* linkPath)
 
 void SystemNative_GetDeviceIdentifiers(uint64_t dev, uint32_t* majorNumber, uint32_t* minorNumber)
 {
-#if !defined(TARGET_WASI)
+#if !defined(TARGET_WASI) && !defined(TARGET_BROWSER)
     dev_t castedDev = (dev_t)dev;
     *majorNumber = (uint32_t)major(castedDev);
     *minorNumber = (uint32_t)minor(castedDev);
@@ -812,7 +812,7 @@ void SystemNative_GetDeviceIdentifiers(uint64_t dev, uint32_t* majorNumber, uint
 
 int32_t SystemNative_MkNod(const char* pathName, uint32_t mode, uint32_t major, uint32_t minor)
 {
-#if !defined(TARGET_WASI)
+#if !defined(TARGET_WASI) && !defined(TARGET_BROWSER)
     dev_t dev = (dev_t)makedev(major, minor);
 
     int32_t result;
@@ -825,7 +825,7 @@ int32_t SystemNative_MkNod(const char* pathName, uint32_t mode, uint32_t major, 
 
 int32_t SystemNative_MkFifo(const char* pathName, uint32_t mode)
 {
-#if !defined(TARGET_WASI)
+#if !defined(TARGET_WASI) && !defined(TARGET_BROWSER)
     int32_t result;
     while ((result = mkfifo(pathName, (mode_t)mode)) < 0 && errno == EINTR);
     return result;
@@ -836,7 +836,7 @@ int32_t SystemNative_MkFifo(const char* pathName, uint32_t mode)
 
 char* SystemNative_MkdTemp(char* pathTemplate)
 {
-#if !defined(TARGET_WASI)
+#if !defined(TARGET_WASI) && !defined(TARGET_BROWSER)
     char* result = NULL;
     while ((result = mkdtemp(pathTemplate)) == NULL && errno == EINTR);
     return result;
@@ -884,8 +884,9 @@ intptr_t SystemNative_MksTemps(char* pathTemplate, int32_t suffixLength)
     {
         pathTemplate[firstSuffixIndex] = firstSuffixChar;
     }
-#elif TARGET_WASI
-    assert_msg(false, "Not supported on WASI", 0);
+#elif defined(TARGET_WASI) || defined(TARGET_BROWSER)
+    assert_msg(false, "Not supported on this platform", 0);
+    errno = ENOTSUP;
     result = -1;
 #else
 #error "Cannot find mkstemps nor mkstemp on this platform"
@@ -1719,8 +1720,8 @@ uint32_t SystemNative_GetFileSystemType(intptr_t fd)
     uint32_t result = (uint32_t)statfsArgs.f_type;
     return result;
 #endif
-#elif defined(TARGET_WASI)
-    return EINTR;
+#elif defined(TARGET_WASI) || defined(TARGET_BROWSER)
+    return 0;
 #elif !HAVE_NON_LEGACY_STATFS
     int statfsRes;
     struct statvfs statfsArgs;

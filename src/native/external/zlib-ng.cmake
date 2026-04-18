@@ -24,6 +24,9 @@ if (CLR_CMAKE_TARGET_BROWSER OR CLR_CMAKE_TARGET_WASI)
   # 'aligned_alloc' is not available in browser/wasi, yet it is set by zlib-ng/CMakeLists.txt.
   set(HAVE_ALIGNED_ALLOC FALSE CACHE BOOL "have aligned_alloc" FORCE)
 
+  # zlib-ng runtime CPU detection emits stubs that are invalid in wasm for some toolchains.
+  set(WITH_RUNTIME_CPU_DETECTION OFF)
+
   # zlib-ng uses atomics, so we need to enable threads when requested for browser/wasi, otherwise the wasm target won't have thread support.
   if (CMAKE_USE_PTHREADS)
       add_compile_options(-pthread)

@@ -119,6 +119,7 @@ const fn_signatures: SigLine[] = [
     [true, "mono_wasm_is_zero_page_reserved", "number", []],
     [true, "mono_jiterp_is_special_interface", "number", ["number"]],
     [true, "mono_jiterp_initialize_table", "void", ["number", "number", "number"]],
+    [true, "mono_jiterp_get_first_trace_fn_ptr", "number", []],
     [true, "mono_jiterp_allocate_table_entry", "number", ["number"]],
     [true, "mono_jiterp_get_interp_entry_func", "number", ["number"]],
     [true, "mono_jiterp_get_counter", "number", ["number"]],
@@ -247,6 +248,7 @@ export interface t_Cwraps {
     mono_wasm_is_zero_page_reserved(): number;
     mono_jiterp_is_special_interface(klass: number): number;
     mono_jiterp_initialize_table(type: number, firstIndex: number, lastIndex: number): void;
+    mono_jiterp_get_first_trace_fn_ptr(): number;
     mono_jiterp_allocate_table_entry(type: number): number;
     mono_jiterp_get_interp_entry_func(type: number): number;
     mono_jiterp_get_counter(counter: number): number;

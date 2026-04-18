@@ -1001,6 +1001,7 @@ ep_rt_queue_job (
 	void *params)
 {
 #ifdef HOST_BROWSER
+#if defined(DISABLE_THREADS)
 	// in single-threaded, it will run the callback inline and re-schedule itself if necessary
 	// it's called from browser event loop
 	ds_job_cb cb = (ds_job_cb)job_func;
@@ -1015,6 +1016,10 @@ ep_rt_queue_job (
 	}
 
 	return true;
+#else
+	EP_UNREACHABLE ("Not implemented on browser when threads are enabled");
+	return false;
+#endif
 #else
 	// not implemented
 	return false;

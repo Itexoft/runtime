@@ -4,6 +4,36 @@
 #include "pal_config.h"
 #include "pal_mount.h"
 #include "pal_utilities.h"
+
+#if defined(TARGET_BROWSER)
+#include <errno.h>
+
+int32_t SystemNative_GetAllMountPoints(MountPointFound onFound, void* context)
+{
+    (void)onFound;
+    (void)context;
+    errno = ENOTSUP;
+    return -1;
+}
+
+int32_t SystemNative_GetSpaceInfoForMountPoint(const char* name, MountPointInformation* mpi)
+{
+    (void)name;
+    (void)mpi;
+    errno = ENOTSUP;
+    return -1;
+}
+
+int32_t SystemNative_GetFileSystemTypeNameForMountPoint(const char* name, char* formatNameBuffer, int32_t bufferLength, int64_t* formatType)
+{
+    (void)name;
+    (void)formatNameBuffer;
+    (void)bufferLength;
+    (void)formatType;
+    errno = ENOTSUP;
+    return -1;
+}
+#else
 #include <assert.h>
 #include <string.h>
 #include <errno.h>
@@ -180,3 +210,4 @@ SystemNative_GetFileSystemTypeNameForMountPoint(const char* name, char* formatNa
 
     return result;
 }
+#endif

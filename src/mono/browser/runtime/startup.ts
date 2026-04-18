@@ -145,8 +145,9 @@ async function instantiateWasmWorker (
 
     // Instantiate from the module posted from the main thread.
     // We can just use sync instantiation in the worker.
-    const instance = new WebAssembly.Instance(Module.wasmModule!, imports);
-    successCallback(instance, undefined);
+    const module = Module.wasmModule!;
+    const instance = new WebAssembly.Instance(module, imports);
+    successCallback(instance, module);
     Module.wasmModule = null;
 }
 

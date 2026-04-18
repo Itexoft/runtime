@@ -8,6 +8,44 @@
 #include "pal_safecrt.h"
 #include "pal_networking.h"
 
+#if defined(TARGET_BROWSER)
+#include <errno.h>
+
+int32_t SystemNative_EnumerateInterfaceAddresses(void* context,
+                                                 IPv4AddressFound onIpv4Found,
+                                                 IPv6AddressFound onIpv6Found,
+                                                 LinkLayerAddressFound onLinkLayerFound)
+{
+    (void)context;
+    (void)onIpv4Found;
+    (void)onIpv6Found;
+    (void)onLinkLayerFound;
+    errno = ENOTSUP;
+    return -1;
+}
+
+int32_t SystemNative_GetNetworkInterfaces(int32_t* interfaceCount,
+                                          NetworkInterfaceInfo** interfaceList,
+                                          int32_t* addressCount,
+                                          IpAddressInfo** addressList)
+{
+    (void)interfaceCount;
+    (void)interfaceList;
+    (void)addressCount;
+    (void)addressList;
+    errno = ENOTSUP;
+    return -1;
+}
+
+int32_t SystemNative_EnumerateGatewayAddressesForInterface(void* context, uint32_t interfaceIndex, GatewayAddressFound onGatewayFound)
+{
+    (void)context;
+    (void)interfaceIndex;
+    (void)onGatewayFound;
+    errno = ENOTSUP;
+    return -1;
+}
+#else
 #include <stdlib.h>
 #include <sys/types.h>
 #include <assert.h>
@@ -664,3 +702,4 @@ int32_t SystemNative_EnumerateGatewayAddressesForInterface(void* context, uint32
     return -1;
 }
 #endif // HAVE_RT_MSGHDR
+#endif

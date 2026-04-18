@@ -1486,7 +1486,7 @@ atomically_set_value_once (gint32 *address, gint32 value) {
 	*address = value;
 #else
 	gint32 expected = 0;
-	static_assert (sizeof(atomic_int) == sizeof(address) && ATOMIC_INT_LOCK_FREE == 2, "");
+	static_assert (sizeof (atomic_int) == sizeof (*address) && ATOMIC_INT_LOCK_FREE == 2, "");
 	if (atomic_compare_exchange_strong ((atomic_int *)address, &expected, value))
 		return;
 	if (expected == value)
@@ -1513,6 +1513,20 @@ mono_jiterp_initialize_table (int type, int first_index, int last_index) {
 	gint32 expected = 0;
 	static_assert (sizeof (atomic_int) == sizeof(table->next_index) && ATOMIC_INT_LOCK_FREE == 2, "");
 	atomic_compare_exchange_strong ((atomic_int *)&table->next_index, &expected, first_index);
+#endif
+}
+
+// Returns the canonical base (first_index of the Trace table) established by the first thread to
+// allocate the jiterpreter tables, or 0 if not yet initialized. Later threads reuse this base so
+// every thread places its trampolines at identical absolute wasm-table indices even when a side
+// module (dlopen) grew this thread's table at a different point in its lifecycle.
+EMSCRIPTEN_KEEPALIVE int
+mono_jiterp_get_first_trace_fn_ptr (void) {
+#ifdef DISABLE_THREADS
+	return mono_jiterp_first_trace_fn_ptr;
+#else
+	static_assert (sizeof (atomic_int) == sizeof (mono_jiterp_first_trace_fn_ptr) && ATOMIC_INT_LOCK_FREE == 2, "");
+	return atomic_load ((atomic_int *)&mono_jiterp_first_trace_fn_ptr);
 #endif
 }
 
