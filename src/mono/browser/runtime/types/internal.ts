@@ -109,6 +109,9 @@ export type RunArguments = {
 export interface AssetEntryInternal extends AssetEntry {
     // this could have multiple values in time, because of re-try download logic
     pendingDownloadInternal?: LoadingResource
+    // Input is the response body downloaded by the main thread. Output is a process-local
+    // module URL shared by all pthread workers. The original resolvedUrl remains canonical.
+    threadModuleUrl?: string
     cache?: RequestCache
     useCredentials?: boolean
     isCore?: boolean

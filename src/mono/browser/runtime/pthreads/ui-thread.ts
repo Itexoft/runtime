@@ -282,7 +282,7 @@ function allocateUnusedWorker (): PThreadWorker {
     if (!WasmEnableThreads) return null as any;
 
     const asset = loaderHelpers.resolve_single_asset_path("js-module-threads");
-    const uri = asset.resolvedUrl;
+    const uri = asset.threadModuleUrl;
     mono_assert(uri !== undefined, "could not resolve the uri for the js-module-threads asset");
     const workerNumber = loaderHelpers.workerNextNumber++;
     const worker = new Worker(uri, {

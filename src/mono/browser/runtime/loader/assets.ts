@@ -142,6 +142,59 @@ export function resolve_single_asset_path (behavior: SingleAssetBehaviors): Asse
     return asset;
 }
 
+export function resolve_module_url (asset: AssetEntryInternal): string {
+    if (WasmEnableThreads) {
+        mono_assert(asset.threadModuleUrl, `Thread module URL for ${asset.name} is not prepared`);
+        return asset.threadModuleUrl;
+    }
+
+    mono_assert(asset.resolvedUrl, `Module URL for ${asset.name} is not resolved`);
+    return asset.resolvedUrl;
+}
+
+// Input is a network module URL. Output is a process-local URL backed by the
+// downloaded response body, so importing it from a pthread performs no HTTP request.
+async function create_module_object_url (url: string): Promise<string> {
+    const response = await loaderHelpers.fetch_like(url, { credentials: "same-origin" });
+    mono_assert(response.ok, `Failed to download JavaScript module '${url}'`);
+    return globalThis.URL.createObjectURL(await response.blob());
+}
+
+export async function prepare_thread_module_urls (): Promise<string> {
+    mono_assert(WasmEnableThreads, "Thread module URLs are only prepared for a threaded runtime");
+    mono_assert(typeof globalThis.URL.createObjectURL === "function", "Threaded runtime requires URL.createObjectURL");
+
+    const workerAsset = resolve_single_asset_path("js-module-threads");
+    const runtimeAsset = resolve_single_asset_path("js-module-runtime");
+    const nativeAsset = resolve_single_asset_path("js-module-native");
+    const diagnosticsAsset = try_resolve_single_asset_path("js-module-diagnostics");
+
+    const loaderUrlPromise = create_module_object_url(loaderHelpers.scriptUrl);
+    const workerUrlPromise = create_module_object_url(workerAsset.resolvedUrl!);
+    const runtimeUrlPromise = create_module_object_url(runtimeAsset.resolvedUrl!);
+    const nativeUrlPromise = create_module_object_url(nativeAsset.resolvedUrl!);
+    const diagnosticsUrlPromise = diagnosticsAsset
+        ? create_module_object_url(diagnosticsAsset.resolvedUrl!)
+        : Promise.resolve(undefined);
+
+    const [loaderUrl, workerUrl, runtimeUrl, nativeUrl, diagnosticsUrl] = await Promise.all([
+        loaderUrlPromise,
+        workerUrlPromise,
+        runtimeUrlPromise,
+        nativeUrlPromise,
+        diagnosticsUrlPromise,
+    ]);
+
+    workerAsset.threadModuleUrl = workerUrl;
+    runtimeAsset.threadModuleUrl = runtimeUrl;
+    nativeAsset.threadModuleUrl = nativeUrl;
+    if (diagnosticsAsset) {
+        diagnosticsAsset.threadModuleUrl = diagnosticsUrl;
+    }
+
+    return loaderUrl;
+}
+
 let downloadAssetsStarted = false;
 export async function mono_download_assets (): Promise<void> {
     if (downloadAssetsStarted) {
@@ -780,10 +833,11 @@ export async function streamingCompileWasm () {
 export function preloadWorkers () {
     if (!WasmEnableThreads) return;
     const jsModuleWorker = resolve_single_asset_path("js-module-threads");
+    const workerUrl = resolve_module_url(jsModuleWorker);
     const loadingWorkers = [];
     for (let i = 0; i < loaderHelpers.config.pthreadPoolInitialSize!; i++) {
         const workerNumber = loaderHelpers.workerNextNumber++;
-        const worker: Partial<PThreadWorker> = new Worker(jsModuleWorker.resolvedUrl!, {
+        const worker: Partial<PThreadWorker> = new Worker(workerUrl, {
             name: "dotnet-worker-" + workerNumber.toString().padStart(3, "0"),
             type: "module",
         });

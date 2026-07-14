@@ -71,7 +71,11 @@ export function configureEmscriptenStartup (module: DotnetModuleInternal): void 
         module.locateFile = module.__locateFile = (path) => loaderHelpers.scriptDirectory + path;
     }
 
-    module.mainScriptUrlOrBlob = loaderHelpers.scriptUrl;// this is needed by worker threads
+    if (WasmEnableThreads) {
+        mono_assert(module.mainScriptUrlOrBlob, "Threaded runtime requires a process-local mainScriptUrlOrBlob");
+    } else {
+        module.mainScriptUrlOrBlob = loaderHelpers.scriptUrl;
+    }
 
     // these all could be overridden on DotnetModuleConfig, we are chaing them to async below, as opposed to emscripten
     // when user set configSrc or config, we are running our default startup sequence.

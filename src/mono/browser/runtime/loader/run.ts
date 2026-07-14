@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 import BuildConfiguration from "consts:configuration";
+import WasmEnableThreads from "consts:wasmEnableThreads";
 
 import { type MonoConfig, type DotnetHostBuilder, type DotnetModuleConfig, type RuntimeAPI, type LoadBootResourceCallback } from "../types";
 import type { EmscriptenModuleInternal, RuntimeModuleExportsInternal, NativeModuleExportsInternal, DiagnosticModuleExportsInternal } from "../types/internal";
@@ -10,7 +11,7 @@ import { ENVIRONMENT_IS_WEB, ENVIRONMENT_IS_WORKER, emscriptenModule, exportedRu
 import { deep_merge_config, deep_merge_module, mono_wasm_load_config } from "./config";
 import { installUnhandledErrorHandler, mono_exit, registerEmscriptenExitHandlers } from "./exit";
 import { setup_proxy_console, mono_log_info, mono_log_debug } from "./logging";
-import { mono_download_assets, preloadWorkers, prepareAssets, prepareAssetsWorker, resolve_single_asset_path, streamingCompileWasm, try_resolve_single_asset_path } from "./assets";
+import { mono_download_assets, preloadWorkers, prepareAssets, prepareAssetsWorker, prepare_thread_module_urls, resolve_module_url, resolve_single_asset_path, streamingCompileWasm, try_resolve_single_asset_path } from "./assets";
 import { detect_features_and_polyfill } from "./polyfills";
 import { runtimeHelpers, loaderHelpers } from "./globals";
 import { init_globalization } from "./icu";
@@ -439,6 +440,14 @@ let jsModuleDiagnosticPromise: Promise<DiagnosticModuleExportsInternal>;
 function importModules () {
     const jsModuleRuntimeAsset = resolve_single_asset_path("js-module-runtime");
     const jsModuleNativeAsset = resolve_single_asset_path("js-module-native");
+    const jsModuleRuntimeUrl = resolve_module_url(jsModuleRuntimeAsset);
+    const jsModuleNativeUrl = resolve_module_url(jsModuleNativeAsset);
+
+    if (WasmEnableThreads && !emscriptenModule.locateFile) {
+        const nativeModuleUrl = new URL(jsModuleNativeAsset.resolvedUrl!, loaderHelpers.scriptUrl).toString();
+        emscriptenModule.locateFile = emscriptenModule.__locateFile = (path) => new URL(path, nativeModuleUrl).toString();
+    }
+
     if (jsModuleRuntimePromise && jsModuleNativePromise) {
         return [jsModuleRuntimePromise, jsModuleNativePromise, jsModuleDiagnosticPromise];
     }
@@ -446,24 +455,25 @@ function importModules () {
     if (typeof jsModuleRuntimeAsset.moduleExports === "object") {
         jsModuleRuntimePromise = jsModuleRuntimeAsset.moduleExports;
     } else {
-        mono_log_debug(() => `Attempting to import '${jsModuleRuntimeAsset.resolvedUrl}' for ${jsModuleRuntimeAsset.name}`);
-        jsModuleRuntimePromise = import(/*! webpackIgnore: true */jsModuleRuntimeAsset.resolvedUrl!);
+        mono_log_debug(() => `Attempting to import '${jsModuleRuntimeUrl}' for ${jsModuleRuntimeAsset.name}`);
+        jsModuleRuntimePromise = import(/*! webpackIgnore: true */jsModuleRuntimeUrl);
     }
 
     if (typeof jsModuleNativeAsset.moduleExports === "object") {
         jsModuleNativePromise = jsModuleNativeAsset.moduleExports;
     } else {
-        mono_log_debug(() => `Attempting to import '${jsModuleNativeAsset.resolvedUrl}' for ${jsModuleNativeAsset.name}`);
-        jsModuleNativePromise = import(/*! webpackIgnore: true */jsModuleNativeAsset.resolvedUrl!);
+        mono_log_debug(() => `Attempting to import '${jsModuleNativeUrl}' for ${jsModuleNativeAsset.name}`);
+        jsModuleNativePromise = import(/*! webpackIgnore: true */jsModuleNativeUrl);
     }
 
     const jsModuleDiagnosticAsset = try_resolve_single_asset_path("js-module-diagnostics");
     if (jsModuleDiagnosticAsset) {
+        const jsModuleDiagnosticUrl = resolve_module_url(jsModuleDiagnosticAsset);
         if (typeof jsModuleDiagnosticAsset.moduleExports === "object") {
             jsModuleDiagnosticPromise = jsModuleDiagnosticAsset.moduleExports;
         } else {
-            mono_log_debug(() => `Attempting to import '${jsModuleDiagnosticAsset.resolvedUrl}' for ${jsModuleDiagnosticAsset.name}`);
-            jsModuleDiagnosticPromise = import(/*! webpackIgnore: true */jsModuleDiagnosticAsset.resolvedUrl!);
+            mono_log_debug(() => `Attempting to import '${jsModuleDiagnosticUrl}' for ${jsModuleDiagnosticAsset.name}`);
+            jsModuleDiagnosticPromise = import(/*! webpackIgnore: true */jsModuleDiagnosticUrl);
         }
     }
 
@@ -521,6 +531,10 @@ async function createEmscriptenMain (): Promise<RuntimeAPI> {
     await mono_wasm_load_config(emscriptenModule);
 
     prepareAssets();
+
+    if (WasmEnableThreads) {
+        emscriptenModule.mainScriptUrlOrBlob = await prepare_thread_module_urls();
+    }
 
     const promises = importModules();
 
